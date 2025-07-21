@@ -1,0 +1,2190 @@
+---
+title: "VIRUS RNASEQ"
+author: "Brenda Karumbo"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r,message=FALSE, warning=FALSE}
+###Load the libraries needed
+library(tidyr)
+library(DESeq2)
+library(data.table)
+library(ggplot2)
+library(limma)
+library(ashr)
+library(plyr)
+library(reshape2)
+library(UpSetR)
+library(EnhancedVolcano)
+library(clusterProfiler)
+library(ReactomePA)
+library(biomaRt)
+library(org.Hs.eg.db)
+library(DOSE)
+library(enrichplot)
+library(igraph)
+library(dplyr)
+library(tidyverse)
+library(Hmisc)
+library(GO.db)
+library(GSEABase)
+library(AnnotationDbi)
+library(ComplexHeatmap)
+library(circlize)
+```
+
+
+```{r}
+###set the working directory to where your files are
+setwd("~/Desktop/PhD/Second_Rotation/Data")
+
+####Load the data
+ counts <- read.csv("GSE147507_RawReadCounts_Human.tsv", sep = "\t", header = T , row.names = 1)
+ 
+```
+
+
+
+```{r}
+# Subset the dataframe by columns that contain "A549" cell line from the lungs
+counts <- counts[, grep("A549", colnames(counts))]
+ 
+
+####create a metadata file 
+metadata_orig <- colnames(counts) # the column names contain the names of the samples
+metadata_orig <- data.frame(metadata_orig) # make this a dataframe  or table
+
+
+
+#### create diferent columns to know the conditions 
+###rows look like:	Series2_A549_Mock_1
+
+
+#separate at the first underscore and create 2 different colnumns
+#(series and sampletype)
+metadata <- metadata_orig %>%
+  separate(metadata_orig, into = c("Series", "sample"), sep = "A549")
+
+
+
+
+#### for aesthetic purposes
+### remove the last _ from the series column eg (Series2_ becomes Series2)  and the first _ from the
+## samples column  eg (_Mock_1 becomes Mock_1)
+
+metadata$Series <- sub("_$", "", metadata$Series )
+
+###remove the beginning _ or .
+metadata$sample <- sub("^_", "", metadata$sample)
+
+metadata$sample <- sub("^\\.", "", metadata$sample)
+
+
+
+
+###add the original names for ease in  subsetting the counts
+metadata$orig<- metadata_orig$metadata_orig
+metadata$condition<- sub("_[^_]*$", "", metadata$sample)
+
+
+####subset of the data to be used for analysis 
+#### SARS.COV2, RSV and IAV
+metadata_use <- metadata[c(1:20,27:32),]
+```
+
+
+
+```{r}
+###3 extract the count data to use from the original counts
+#### the column names should contain the same names as those in the subsetted 
+#metadata
+counts_use <- counts[, metadata_use$orig]
+
+###create a DEseq object
+### design should be the conditions you want to compare
+dds <- DESeqDataSetFromMatrix(countData = counts_use,
+                              colData = metadata_use,
+                              design = ~ condition)
+
+####extract normalized counts (use later)
+dds <- estimateSizeFactors(dds)
+normalized_counts <- counts(dds, normalized=TRUE)
+```
+
+
+```{r}
+#####SARS-COV2 dataset
+metadata_SARS <- metadata_use[c(1:6,15:20),]
+
+### put the row.names 
+row.names(metadata_SARS)<- metadata_SARS$orig
+
+##Subset the  count to only have those that match to SARS-COV2
+counts_SARS <- counts[, row.names(metadata_SARS)]
+
+####save the datasets( not to repeat)
+write.csv(metadata_SARS , "Metadata_SARS_COV2.csv")
+write.csv(counts_SARS, "Counts_SARS_COV2.csv")
+```
+
+
+
+```{r}
+####IAV dataset
+metadata_IAV <- metadata_use[c(11:14),]
+
+### put the row.names 
+row.names(metadata_IAV) <- metadata_IAV$orig
+
+##Subset the  count to only have those that match to IAV
+counts_IAV <- counts[,row.names(metadata_IAV)]
+
+
+###save the datasets
+write.csv(metadata_IAV, "metadata_IAV.csv")
+write.csv(counts_IAV, "counts_IAV.csv")
+
+```
+
+
+
+```{r}
+####RSV dataset
+metadata_RSV <- metadata_use[c(7:10,21:26),]
+
+### put the row.names 
+row.names(metadata_RSV)<- metadata_RSV$orig
+
+##Subset the  count to only have those that match to RSV
+counts_RSV <- counts[, row.names(metadata_RSV)]
+
+
+####save the datasets
+write.csv(metadata_RSV,"metadata_RSV.csv")
+write.csv(counts_RSV, "counts_RSV.csv")
+```
+
+
+
+####Analysis SARS COV 2
+```{r}
+####Run differential gene expression
+#### Use the Series as a covariate(removing the batch effects from multiple batches)
+
+deseq_sars <- DESeqDataSetFromMatrix(
+  countData = counts_SARS,
+  colData = metadata_SARS,
+  design = ~ Series + condition
+)
+
+###run  differential gene expression
+deseq_sars <- DESeq(deseq_sars)
+
+
+####get the Differentially expressed genes making sure that the positive fold change 
+#genes belong to the disease condition 
+res <- results(deseq_sars, contrast = c("condition", "SARS.CoV.2", "Mock"))
+
+###extract results in tabular format
+res_sars <- data.frame(res)
+
+
+####save
+write.csv(res_sars, "SARS.COV2_deg.csv")
+
+#### get the genes that are significant (adjusted p value less than 0.05)
+res_sars.sig <- subset(res_sars, res_sars$padj< 0.05)
+
+```
+
+
+
+####Analysis IAV
+```{r}
+####Run differential gene expression
+deseq_IAV <- DESeqDataSetFromMatrix(
+  countData = counts_IAV,
+  colData = metadata_IAV,
+  design = ~ condition
+)
+
+
+###run  differential gene expression
+deseq_IAV <- DESeq(deseq_IAV)
+
+####get the Differentially expressed genes making sure that the positive fold change 
+#genes belong to the disease condition 
+res_IAV <- results(deseq_IAV, contrast = c("condition", "IAV", "Mock"))
+
+###extract results in tabular format
+res_IAV <- data.frame(res_IAV)
+
+###save
+write.csv(res_IAV, "IAV.deg.csv")
+
+#### extract the significant genes
+res_IAV.sig <- subset(res_IAV, res_IAV$padj< 0.05)
+```
+
+
+
+####Analysis for RSV
+```{r}
+####Run differential gene expression
+deseq_RSV <- DESeqDataSetFromMatrix(
+  countData = counts_RSV,
+  colData = metadata_RSV,
+  design = ~ Series+ condition
+)
+
+
+###run  differential gene expression
+deseq_RSV <- DESeq(deseq_RSV)
+
+
+####get the Differentially expressed genes making sure that the positive fold change 
+#genes belong to the disease condition 
+res_RSV <- results(deseq_RSV, contrast = c("condition", "RSV", "Mock"))
+
+
+
+###extract results in tabular format
+res_RSV <- data.frame(res_RSV)
+
+###extract results in tabular format
+write.csv(res_RSV, "RSV.deg.csv")
+
+#### extract the significant genes
+res_RSV.sig <- subset(res_RSV, res_RSV$padj< 0.05)
+```
+
+
+###SARS COV2 volcano
+```{r}
+###. use  the Enhanced volcano package to make this
+#### Tutorial: https://github.com/kevinblighe/EnhancedVolcano
+#### you can customize as you see fit :)
+
+  EnhancedVolcano(res_sars,
+    lab = rownames(res_sars),
+    x = 'log2FoldChange',
+    y = 'pvalue',
+    pCutoff = 10e-2,
+    FCcutoff = 1.5,
+    cutoffLineType = 'twodash',
+    cutoffLineWidth = 0.8,
+    pointSize = 1.5,
+    labSize = 3.0,
+    colAlpha = 1,
+    legendLabels=c('Not sig.','Log (base 2) FC','p-value',
+      'p-value & Log (base 2) FC'),
+    legendPosition = 'right',
+    legendLabSize = 16,
+    title = "SARS.COV2 Volcano plot",
+  subtitle = NULL,
+    legendIconSize = 5.0)
+```
+
+
+###IAV volcano
+```{r}
+###. use  the Enhanced volcano package to make this
+#### Tutorial: https://github.com/kevinblighe/EnhancedVolcano
+#### you can customize as you see fit :)
+
+  EnhancedVolcano(res_IAV,
+    lab = rownames(res_IAV),
+    x = 'log2FoldChange',
+    y = 'pvalue',
+    pCutoff = 10e-2,
+    FCcutoff = 1.0,
+    cutoffLineType = 'twodash',
+    cutoffLineWidth = 0.8,
+    pointSize = 1.5,
+    labSize = 3.0,
+    colAlpha = 1,
+    legendLabels=c('Not sig.','Log (base 2) FC','p-value',
+      'p-value & Log (base 2) FC'),
+    legendPosition = 'right',
+    legendLabSize = 16,
+    title = "IAV Volcano plot",
+  subtitle = NULL,
+    legendIconSize = 5.0)
+```
+
+
+
+####RSV Volcano
+```{r}
+###. use  the Enhanced volcano package to make this
+#### Tutorial: https://github.com/kevinblighe/EnhancedVolcano
+#### you can customize as you see fit :)
+
+  EnhancedVolcano(res_RSV,
+    lab = rownames(res_RSV),
+    x = 'log2FoldChange',
+    y = 'pvalue',
+    pCutoff = 10e-2,
+    FCcutoff = 1.0,
+    cutoffLineType = 'twodash',
+    cutoffLineWidth = 0.8,
+    pointSize = 1.5,
+    labSize = 3.0,
+    colAlpha = 1,
+    legendLabels=c('Not sig.','Log (base 2) FC','p-value',
+      'p-value & Log (base 2) FC'),
+    legendPosition = 'right',
+    legendLabSize = 16,
+    title = "RSV Volcano plot",
+  subtitle = NULL,
+    legendIconSize = 5.0)
+```
+
+
+
+
+####find overlaps of genes
+```{r}
+###find overlap of SARSCOV2 and other viruses
+#### get the genes that are significantly differntially 
+SARS_genes <- row.names(res_sars.sig)
+IAV_genes <- row.names(res_IAV.sig)
+RSV_genes<- row.names(res_RSV.sig)
+
+####Save the genes that are significantly DE
+write(SARS_genes, "SARS_genes.txt")
+write(IAV_genes, "IAV_genes.txt")
+write(RSV_genes, "RSV_genes.txt")
+
+```
+
+
+
+####make the upset plot
+```{r}
+# Use UpSet2::fromList to convert your sets
+
+####create a list of the differentially expresssed genes
+gene_sets <- list(
+  SARS.COV2 = SARS_genes,
+  IAV = IAV_genes,
+  RSV = RSV_genes
+)
+
+
+#### use the UPSETR package : https://jokergoo.github.io/ComplexHeatmap-reference/book/upset-plot.html
+
+####again you are an artist make it as pretty as 
+
+#Graph parameters 
+text_scale_options3 <- c(1.2, 1, 1.2, 1, 1, 1) 
+#setting colors #this can also be done with hexadecimal
+main_bar_col <- c("violetred4") 
+sets_bar_col <- c("turquoise4")
+matrix_col <- c("slateblue4") 
+shade_col <- c("wheat4") 
+mb_ratio1 <- c(0.45,0.55) 
+# setting variable names 
+set_vars <- sort(names(gene_sets)) 
+upset(fromList(gene_sets), 	
+      sets = set_vars, 	
+      mb.ratio = mb_ratio1, 	
+      nsets = 30, 	
+      nintersects = 30, 	
+      mainbar.y.label = "Gene intersect counts ", 	
+      sets.x.label = "DEGs per virus", 	
+      order.by = "freq", 	
+      show.numbers = "yes", 	
+      point.size = 2, 	
+      line.size = 0.5, 	
+      set_size.angles = 45, 	
+      #boxplot.summary = NULL, 	
+      keep.order = T, 	
+      text.scale = text_scale_options3, 	
+      #number.angles = 45, 	
+      main.bar.color = main_bar_col, 	
+      sets.bar.color = sets_bar_col, 	
+      matrix.color = matrix_col, 	
+      shade.color = shade_col)
+
+```
+
+
+
+```{r}
+#### get the genes that are common the three datasets
+common <- Reduce(intersect, list(SARS_genes, IAV_genes, RSV_genes))
+
+#common
+
+```
+
+
+```{r}
+####get the genes that are common in RSV and IAV
+common_IAV <- intersect(RSV_genes, IAV_genes)
+
+#common_IAV
+```
+
+
+
+
+```{r}
+
+####get the genes that are common in SARS and IAV
+common_RSV <- intersect(SARS_genes, RSV_genes)
+
+#common_RSV
+
+write(common_RSV, "common_RSV.txt")
+```
+
+
+####STEP 2 
+###Get the pathways of all DEGs
+```{r}
+##Filter out immune related genes (use GO annotations or ImmPort) – identify and exclude from the 3 DGE lists
+
+####use the manually curated reactome pathway
+```
+
+
+###SARS-COV2
+
+```{r}
+####USE the Ensembl package for this section
+###convert the gene symbols to Entrez 
+
+
+# Connect to the Ensembl BioMart database
+ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")  # use the human one
+
+# Your list of gene symbols in this case the SARS-COV2 genes
+#SARS_genes
+
+# Query BioMart for Entrez IDs
+results_SARS <- getBM(
+  attributes = c("hgnc_symbol", "entrezgene_id"),
+  filters = "hgnc_symbol",
+  values = SARS_genes,
+  mart = ensembl
+)
+
+# View the result
+head(results_SARS)
+####5624 genes
+
+```
+
+
+
+```{r}
+# Query BioMart for Entrez IDs
+universe_entrez <- getBM(
+  attributes = c("hgnc_symbol", "entrezgene_id"),
+  filters = "hgnc_symbol",
+  values = row.names(counts),
+  mart = ensembl
+)
+
+
+### this is all the genes the study uses from all genes
+universe_entrez <- universe_entrez$entrezgene_id 
+
+### convert to characters required
+universe_entrez <- as.character(universe_entrez)
+```
+
+```{r}
+####Find the reactome pathways 
+##### use the clusterprofiler package for the pathways
+####https://yulab-smu.top/biomedical-knowledge-mining-book/index.html
+
+
+### Extract the entrez ids of the SARS COV Genes
+SARS_ENTREZ <- results_SARS$entrezgene_id
+
+
+
+
+###Carry out the GO ontology using the reactome database
+sars_pathways <- enrichPathway(gene=SARS_ENTREZ, pvalueCutoff = 0.05, readable=TRUE,minGSSize = 5,maxGSSize = 800, universe = universe_entrez )
+head(sars_pathways)
+
+
+sars_pathways_df <- data.frame(sars_pathways)
+
+
+write.csv(sars_pathways_df, "sars_pathways_reactome.csv")
+```
+
+
+###IAV
+
+```{r}
+##### get the reactome pathways  for the other viruses
+# Query BioMart for Entrez IDs
+results_IAV <- getBM(
+  attributes = c("hgnc_symbol", "entrezgene_id"),
+  filters = "hgnc_symbol",
+  values = IAV_genes,
+  mart = ensembl
+)
+
+# View the result
+head(results_IAV)
+
+results_IAV <- na.omit(results_IAV)
+#### genes = 108
+```
+
+
+```{r}
+####Find the reactome pathways 
+### Extract the entrez ids of the SARS COV Genes
+IAV_ENTREZ <- results_IAV$entrezgene_id
+
+###Carry out the GO ontology using the reactome database
+IAV_pathways <- enrichPathway(gene=IAV_ENTREZ, pvalueCutoff = 0.05, readable=TRUE,minGSSize = 5,maxGSSize = 800, universe = universe_entrez)
+head(IAV_pathways)
+
+IAV_pathways_df <- data.frame(IAV_pathways)
+
+
+write.csv(IAV_pathways_df, "IAV_pathways_reactome.csv")
+```
+
+####RSV
+
+```{r}
+##### get the reactome pathways  for the other viruses
+# Query BioMart for Entrez IDs
+results_RSV <- getBM(
+  attributes = c("hgnc_symbol", "entrezgene_id"),
+  filters = "hgnc_symbol",
+  values = RSV_genes,
+  mart = ensembl
+)
+
+# View the result
+head(results_RSV)
+
+results_RSV <- na.omit(results_RSV)
+#### genes = 2066
+```
+
+
+```{r}
+####Find the reactome pathways 
+### Extract the entrez ids of the SARS COV Genes
+RSV_ENTREZ <- results_RSV$entrezgene_id
+
+###Carry out the GO ontology using the reactome database
+RSV_pathways <- enrichPathway(gene=RSV_ENTREZ, pvalueCutoff = 0.05, readable=TRUE,minGSSize = 5,maxGSSize = 800, universe = universe_entrez)
+head(RSV_pathways)
+
+RSV_pathways_df <- data.frame(RSV_pathways)
+
+
+write.csv(RSV_pathways_df, "RSV_pathways_reactome.csv")
+```
+
+
+
+```{r}
+####Visualise the enriched pathways
+ #RSV
+mutate(RSV_pathways, qscore = -log(p.adjust, base=10)) %>% 
+    barplot(x="qscore")
+
+#SARS
+mutate(sars_pathways, qscore = -log(p.adjust, base=10)) %>% 
+    barplot(x="qscore")
+
+#IAV
+mutate(IAV_pathways, qscore = -log(p.adjust, base=10)) %>% 
+    barplot(x="qscore")
+```
+
+
+
+```{r}
+#### Remove the Immune related genes 
+### step 1  start with genes in IMMMPORTx
+###https://www.immport.org/shared/home
+
+```
+
+```{r}
+#### the immport pathways are in the Immport_pathways folder
+#### change the directory
+setwd("~/Desktop/PhD/Second_Rotation/Data/Immport_pathways")
+
+
+#### load the datasets
+# Define the folder path
+folder_path <- "~/Desktop/PhD/Second_Rotation/Data/Immport_pathways"
+
+# Get all CSV files in the folder
+csv_files <- list.files(path = folder_path, pattern = "*.csv", full.names = TRUE)
+head(csv_files)
+
+
+# Read all CSV files into a list of data frames with the specified options
+data_list <- lapply(csv_files, function(file) read.csv(file, sep = "\t", header = TRUE))
+head(data_list[[1]])
+
+# Optionally, if you want to combine them into a single data frame
+combined_data <- do.call(rbind, data_list)
+dim(combined_data)
+
+head(combined_data)
+```
+
+```{r}
+#### extract the immune related genes
+immune_genes <- combined_data$Symbol
+
+##remove the duplicate genes
+immune_genes_uniq <- unique(immune_genes)
+
+length(immune_genes_uniq) ### 3118
+```
+
+
+
+```{r}
+#### identify the number of immune related genes in the Three viruses
+
+####SARS
+sars_immune <- intersect(SARS_genes, immune_genes_uniq)
+length(sars_immune)### 988
+
+
+####IAV
+IAV_immune <- intersect(IAV_genes, immune_genes_uniq)
+length(IAV_immune) ### 24
+
+
+###RSV
+RSV_immune <- intersect(RSV_genes, immune_genes_uniq)
+length(RSV_immune) ### 483
+```
+
+
+
+
+```{r}
+#TOTAL non immune genes  setdiff gets the genes that are not in that list
+total_non.immune <- setdiff(rownames(counts), candidate_genes)
+```
+
+
+
+```{r}
+####identify the number of non immune genes in the virus DEGs
+Sars_non.immune <- setdiff(SARS_genes, sars_immune) #4784
+IAV_non.immune <- setdiff(IAV_genes, IAV_immune) ##85
+RSV_non.immune <- setdiff(RSV_genes, RSV_immune)###1660
+
+```
+
+#### Find the  overlap of non-immune genes 
+
+```{r}
+# Use UpSet2::fromList to convert your sets
+gene_sets_non.immune <- list(
+  SARS.COV2 =Sars_non.immune ,
+  IAV = IAV_non.immune,
+  RSV =RSV_non.immune
+)
+#Graph parameters 
+text_scale_options3 <- c(1.2, 1, 1.2, 1, 1, 1) 
+#setting colors #this can also be done with hexadecimal
+main_bar_col <- c("violetred4") 
+sets_bar_col <- c("turquoise4")
+matrix_col <- c("slateblue4") 
+shade_col <- c("wheat4") 
+mb_ratio1 <- c(0.45,0.55) 
+# setting variable names 
+set_vars <- sort(names(gene_sets_non.immune)) 
+upset(fromList(gene_sets_non.immune), 	
+      sets = set_vars, 	
+      mb.ratio = mb_ratio1, 	
+      nsets = 30, 	
+      nintersects = 30, 	
+      mainbar.y.label = "Gene intersect counts ", 	
+      sets.x.label = "DEGs per virus", 	
+      order.by = "freq", 	
+      show.numbers = "yes", 	
+      point.size = 2, 	
+      line.size = 0.5, 	
+      set_size.angles = 45, 	
+      #boxplot.summary = NULL, 	
+      keep.order = T, 	
+      text.scale = text_scale_options3, 	
+      #number.angles = 45, 	
+      main.bar.color = main_bar_col, 	
+      sets.bar.color = sets_bar_col, 	
+      matrix.color = matrix_col, 	
+      shade.color = shade_col)
+
+```
+
+
+
+
+
+####find the pathways of the non immune genes
+```{r}
+
+###convert the gene symbols to Entrez 
+# Connect to the Ensembl BioMart database
+ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")  # use the human one
+
+# Your list of gene symbols
+#Sars_non.immune
+
+# Query BioMart for Entrez IDs
+results_SARS_non.immune <- getBM(
+  attributes = c("hgnc_symbol", "entrezgene_id"),
+  filters = "hgnc_symbol",
+  values = Sars_non.immune,
+  mart = ensembl
+)
+
+# View the result
+head(results_SARS_non.immune)
+####5624 genes
+```
+
+```{r}
+####Find the reactome pathways 
+### Extract the entrez ids of the SARS COV Genes
+SARS_ENTREZ_non.immune <- results_SARS_non.immune$entrezgene_id
+
+###Carry out the GO ontology using the reactome database
+sars_pathways_non.immune <- enrichPathway(gene=SARS_ENTREZ_non.immune, pvalueCutoff = 0.05,readable=TRUE, minGSSize = 3, maxGSSize = 800, universe = Total_non.immune.entrez, qvalueCutoff = 1)
+head(sars_pathways_non.immune)
+
+sars_pathways_df.non.immune <- data.frame(sars_pathways_non.immune)
+
+
+write.csv(sars_pathways_df.non.immune, "sars_pathways_reactome_non.immune.csv")
+```
+
+
+
+###IAV
+
+```{r}
+##### get the reactome pathways  for the other viruses
+# Query BioMart for Entrez IDs
+results_IAV_non.immune <- getBM(
+  attributes = c("hgnc_symbol", "entrezgene_id"),
+  filters = "hgnc_symbol",
+  values = IAV_non.immune,
+  mart = ensembl
+)
+
+# View the result
+head(results_IAV_non.immune)
+
+results_IAV_non.immune <- na.omit(results_IAV_non.immune)
+#### genes = 108
+```
+
+
+```{r}
+####Find the reactome pathways 
+### Extract the entrez ids of the SARS COV Genes
+IAV_ENTREZ_non.immune <- results_IAV_non.immune$entrezgene_id
+
+###Carry out the GO ontology using the reactome database
+IAV_pathways_non.immune <- enrichPathway(gene=IAV_ENTREZ_non.immune, pvalueCutoff = 0.05,readable=TRUE, minGSSize = 3, maxGSSize = 800, universe = Total_non.immune.entrez, qvalueCutoff = 1)
+head(IAV_pathways_non.immune)
+
+IAV_pathways_df_non.immune <- data.frame(IAV_pathways_non.immune)
+
+
+write.csv(IAV_pathways_df_non.immune, "IAV_pathways_reactome_non.immune.csv")
+```
+
+####RSV
+
+```{r}
+##### get the reactome pathways  for the other viruses
+# Query BioMart for Entrez IDs
+results_RSV_non.immune <- getBM(
+  attributes = c("hgnc_symbol", "entrezgene_id"),
+  filters = "hgnc_symbol",
+  values = RSV_non.immune,
+  mart = ensembl
+)
+
+# View the result
+head(results_RSV_non.immune)
+
+results_RSV_non.immune <- na.omit(results_RSV_non.immune)
+#### genes = 1580
+```
+
+
+```{r}
+####Find the reactome pathways 
+### Extract the entrez ids of the SARS COV Genes
+RSV_ENTREZ_non.immune <- results_RSV_non.immune$entrezgene_id
+
+###Carry out the GO ontology using the reactome database
+RSV_pathways_non.immune <- enrichPathway(gene=RSV_ENTREZ_non.immune, pvalueCutoff = 0.05, readable=TRUE, minGSSize = 3, maxGSSize = 800, universe = Total_non.immune.entrez)
+head(RSV_pathways_non.immune,qvalueCutoff = 1)
+
+RSV_pathways_df_non.immune<- data.frame(RSV_pathways_non.immune)
+
+
+write.csv(RSV_pathways_df_non.immune, "RSV_pathways_reactome_non.immune.csv")
+```
+
+
+
+```{r}
+Total_non.immune.entrez <- getBM(
+  attributes = c("hgnc_symbol", "entrezgene_id"),
+  filters = "hgnc_symbol",
+  values = total_non.immune,
+  mart = ensembl
+)
+
+####14838
+Total_non.immune.entrez <- Total_non.immune.entrez$entrezgene_id
+Total_non.immune.entrez <- na.omit(Total_non.immune.entrez)
+
+```
+
+#### Visualization
+###RSV
+```{r}
+####Visualise the enriched pathways
+ #RSV
+mutate(RSV_pathways_non.immune, qscore = -log(p.adjust, base=10)) %>% 
+    barplot(x="qscore")
+```
+```{r}
+ #RSV
+mutate(ego.R, qscore = -log(p.adjust, base=10)) %>% 
+    barplot(x="qscore")
+```
+
+###SARS-COV2
+```{r}
+#SARS
+mutate(sars_pathways_non.immune, qscore = -log(p.adjust, base=10)) %>% 
+    barplot(x="qscore")
+```
+```{r}
+ #SARS
+mutate(ego.s, qscore = -log(p.adjust, base=10)) %>% 
+    barplot(x="qscore")
+```
+
+###IAV
+```{r}
+#IAV
+mutate(IAV_pathways_non.immune, qscore = -log(p.adjust, base=10)) %>% 
+    barplot(x="qscore")
+```
+
+
+```{r}
+#IAV
+mutate(ego.I, qscore = -log(p.adjust, base=10)) %>% 
+    barplot(x="qscore")
+```
+
+
+
+####upset for non immune gene pathways
+```{r}
+pathways_non.immune <- list(SARS_COV2 = sars_pathways_df.non.immune$ID,
+RSV = RSV_pathways_df_non.immune$ID,
+IAV = IAV_pathways_df_non.immune$ID)
+
+#Graph parameters 
+text_scale_options3 <- c(1.2, 1, 1.2, 1, 1, 1) 
+#setting colors #this can also be done with hexadecimal
+main_bar_col <- c("violetred4") 
+sets_bar_col <- c("turquoise4")
+matrix_col <- c("slateblue4") 
+shade_col <- c("wheat4") 
+mb_ratio1 <- c(0.45,0.55) 
+# setting variable names 
+set_vars <- sort(names(pathways_non.immune)) 
+upset(fromList(pathways_non.immune), 	
+      sets = set_vars, 	
+      mb.ratio = mb_ratio1, 	
+      nsets = 30, 	
+      nintersects = 30, 	
+      mainbar.y.label = "pathway intersect counts ", 	
+      sets.x.label = "pathways per virus", 	
+      order.by = "freq", 	
+      show.numbers = "yes", 	
+      point.size = 2, 	
+      line.size = 0.5, 	
+      set_size.angles = 45, 	
+      #boxplot.summary = NULL, 	
+      keep.order = T, 	
+      text.scale = text_scale_options3, 	
+      #number.angles = 45, 	
+      main.bar.color = main_bar_col, 	
+      sets.bar.color = sets_bar_col, 	
+      matrix.color = matrix_col, 	
+      shade.color = shade_col)
+```
+
+
+###Step4 gene gene interaction and protein protein interaction
+```{r}
+```
+
+
+```{r}
+universe_genes <- row.names(counts_IAV)### all genes  
+ego.s <- enrichGO(gene          = Sars_non.immune,
+                universe      = universe_genes,
+                OrgDb         = org.Hs.eg.db,
+                keyType       = "SYMBOL",
+                ont           = "BP",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.5,
+                qvalueCutoff  = 1,
+                minGSSize     =5,  
+        readable      = TRUE)
+head(ego.s)
+
+ego.s.df <- data.frame(ego.s)
+
+write.csv(ego.s.df, "sars_go1_non.immune.csv")
+```
+
+
+```{r}
+```
+
+```{r}
+ego.R <- enrichGO(gene        = RSV_non.immune,
+                universe      = universe_genes,
+                OrgDb         = org.Hs.eg.db,
+                keyType       = "SYMBOL",
+                ont           = "BP",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.5,
+                qvalueCutoff  = 1,
+                minGSSize     =5,
+        readable      = TRUE)
+head(ego.R)
+ego.R.df <- data.frame(ego.R)
+write.csv(ego.R.df, "RSV_go1_non.immune.csv")
+```
+
+
+```{r}
+### find the enchriched   go terms
+ego.I <- enrichGO(gene        = IAV_non.immune,
+                universe      = universe_genes,
+                OrgDb         = org.Hs.eg.db,
+                keyType       = "SYMBOL",
+                ont           = "BP",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.5,
+                qvalueCutoff  = 1,
+                minGSSize     =3,
+        readable      = TRUE)
+head(ego.I)
+ego.I.df <- data.frame(ego.I)
+write.csv(ego.I.df, "IAV_go1_non.immune.csv")
+```
+
+
+
+#### pathways that overlap
+```{r}
+pathways_non.immune <- list(IAV = ego.I.df$ID,
+RSV = ego.R.df$ID,
+SARS_COV2 = ego.s.df$ID)
+
+#Graph parameters 
+text_scale_options3 <- c(1.2, 1, 1.2, 1, 1, 1) 
+#setting colors #this can also be done with hexadecimal
+main_bar_col <- c("violetred4") 
+sets_bar_col <- c("turquoise4")
+matrix_col <- c("slateblue4") 
+shade_col <- c("wheat4") 
+mb_ratio1 <- c(0.45,0.55) 
+# setting variable names 
+set_vars <- sort(names(pathways_non.immune)) 
+upset(fromList(pathways_non.immune), 	
+      sets = set_vars, 	
+      mb.ratio = mb_ratio1, 	
+      nsets = 30, 	
+      nintersects = 30, 	
+      mainbar.y.label = "pathway intersect counts ", 	
+      sets.x.label = "pathways per virus", 	
+      order.by = "freq", 	
+      show.numbers = "yes", 	
+      point.size = 2, 	
+      line.size = 0.5, 	
+      set_size.angles = 45, 	
+      #boxplot.summary = NULL, 	
+      keep.order = T, 	
+      text.scale = text_scale_options3, 	
+      #number.angles = 45, 	
+      main.bar.color = main_bar_col, 	
+      sets.bar.color = sets_bar_col, 	
+      matrix.color = matrix_col, 	
+      shade.color = shade_col)
+
+```
+### intersect of all
+```{r}
+intersect_all <- Reduce(intersect, list(IAV = ego.I.df$ID,
+RSV = ego.R.df$ID,
+SARS_COV2 = ego.s.df$ID))
+print(intersect_all)
+```
+
+```{r}
+intersect_all.df <- ego.s.df[intersect_all,]
+intersect_all.df
+```
+##### use GO slim 
+```{r}
+#### SARS COV2 
+library(GSEABase)
+
+goterms <- ego.s.df$ID
+## Store goterms as GSEA object
+myCollection <- GOCollection(goterms)
+
+###download the following: https://current.geneontology.org/ontology/subsets/goslim_generic.obo
+####save it as go_basic.obo
+
+slim <- getOBOCollection("/Users/brendakarumbo/Desktop/PhD/Second_Rotation/Data/GO_slim/go_basic.obo")
+
+## Map GO terms to GOslims and select Biological Processes group
+slims.sars <- goSlim(myCollection, slim, "BP", verbose = TRUE)
+  
+slims.sars <- slims.sars[slims.sars$Count != 0, ]
+
+View(slims.sars)
+
+###SARS (582, 52)
+# This should match the ontology used above.
+# E.g. GOBPOFFSPRING or GOCCOFFSPRING
+GO.db::GOBPOFFSPRING
+
+
+####getting all the children associated with the goslims
+mappedIds <-
+  function(df, collection, OFFSPRING)
+  {
+    map <- as.list(OFFSPRING[rownames(df)])
+    mapped <- map
+    df[["go_terms"]] <- vapply(unname(mapped), paste, collapse = ";", character(1L))
+    df
+  }
+
+####this is the point we do this .... teren teren teren
+slimdf_sars <- mappedIds(slims.sars, collection = NULL, GOBPOFFSPRING)
+
+write.csv(slimdf_sars, file = "go_offspring_sars.csv", quote = FALSE)
+```
+
+
+```{r}
+#####get the collective go terms after enrichgo
+enrich_go_terms.s <- ego.s.df$ID
+
+
+#####
+# Step 1: Split the go_terms column into separate GO IDs
+library(tidyr)
+
+slimdf_sars_long <- slimdf_sars |>
+  separate_rows(go_terms, sep = ";")  # makes one row per GO ID
+
+# Step 2: Keep only rows where the go_term is in enrichGO results
+slimdf_sars_matched <- slimdf_sars_long |>
+  filter(go_terms %in% enrich_go_terms.s)
+
+#####
+# Step 3: Check how many matches
+nrow(slimdf_sars_matched)  # number of GO term matches
+length(unique(slimdf_sars_matched$go_terms))
+
+#####
+enrichGO_genes.s <- ego.s.df %>%
+  separate_rows(geneID, sep = "/")  # split genes into rows
+
+# Join enrichGO genes with slim terms
+genes_linked_to_slims.s <- enrichGO_genes.s %>%
+  inner_join(slimdf_sars_long, by = c("ID" = "go_terms"))  # or the right column if GO term is named differently
+
+
+
+####sumarise these
+genes_per_slim.s <- genes_linked_to_slims.s %>%
+  group_by(Term) %>%
+  summarise(genes = paste(unique(geneID), collapse = ";"))
+
+
+#####combine the nameds and the GO terms
+View(slimdf_sars)
+slims.sars$Go <- rownames(slims.sars)
+slims.sars1 <- slims.sars
+row.names(slims.sars1) <- slims.sars1$Term 
+
+slims.sars1 <- slims.sars1[genes_per_slim.s$Term,]
+
+
+
+#### 
+
+genes_per_slim.s$GO <- slims.sars1$Go
+
+rownames(genes_per_slim.s) <- genes_per_slim.s$GO
+genes_per_slim.s <- as.data.frame(genes_per_slim.s)
+rownames(genes_per_slim.s) <- genes_per_slim.s$GO
+
+View(genes_per_slim.s)
+write.csv(genes_per_slim.s, file = "go_slim.non.immune_sars.csv", quote = FALSE)
+
+```
+
+
+```{r}
+#####RSV
+go_termsR <- ego.R.df$ID
+
+## Store goterms as GSEA object
+myCollection <- GOCollection(go_termsR)
+
+## Map GO terms to GOslims and select Biological Processes group
+slims.RSV <- goSlim(myCollection, slim, "BP", verbose = TRUE)
+
+slims.RSV <- slims.RSV[slims.RSV$Count != 0, ]
+
+slimdf_rsv <- mappedIds(slims.RSV,slim, GOBPOFFSPRING)
+
+write.csv(slimdf_rsv, file = "go_offspring_rsv.csv", quote = FALSE)
+###51
+```
+
+
+####Adding the genes to the RSV go slims
+```{r}
+#####get the collective go terms after enrichgo
+enrich_go_terms.r <- ego.R.df$ID
+
+
+#####
+# Step 1: Split the go_terms column into separate GO IDs
+library(tidyr)
+
+####Get the children associated terms
+slimdf_rsv <- mappedIds(slims.RSV, collection = NULL, GOBPOFFSPRING)
+
+###
+slimdf_rsv_long <- slimdf_rsv |>
+  separate_rows(go_terms, sep = ";")  # makes one row per GO ID
+
+# Step 2: Keep only rows where the go_term is in enrichGO results
+slimdf_rsv_matched <- slimdf_rsv_long |>
+  filter(go_terms %in% enrich_go_terms.r)
+
+#####
+# Step 3: Check how many matches
+nrow(slimdf_rsv_matched)  # number of GO term matches
+length(unique(slimdf_rsv_matched$go_terms))
+
+#####
+enrichGO_genes.r <- ego.R.df %>%
+  separate_rows(geneID, sep = "/")  # split genes into rows
+
+# Join enrichGO genes with slim terms
+genes_linked_to_slims.r <- enrichGO_genes.r%>%
+  inner_join(slimdf_rsv_long, by = c("ID" = "go_terms"))  # or the right column if GO term is named differently
+
+
+
+####sumarise these
+genes_per_slim.r <- genes_linked_to_slims.r %>%
+  group_by(Term) %>%
+  summarise(genes = paste(unique(geneID), collapse = ";"))
+
+
+#####combine the names and the GO terms
+View(slimdf_rsv)
+slims.RSV$Go <- rownames(slims.RSV)
+slims.RSV1 <- slims.RSV
+row.names(slims.RSV1) <- slims.RSV1$Term 
+
+slims.RSV1 <- slims.RSV1[genes_per_slim.r$Term,]
+
+
+
+#### 
+
+genes_per_slim.r$GO <- slims.RSV1$Go
+
+rownames(genes_per_slim.r) <- genes_per_slim.r$GO
+genes_per_slim.r <- as.data.frame(genes_per_slim.r)
+rownames(genes_per_slim.r) <- genes_per_slim.r$GO
+
+View(genes_per_slim.r)
+write.csv(genes_per_slim.r, file = "./GO_slims/go_slim.non.immune_rsv.csv", quote = FALSE)
+
+```
+
+
+```{r}
+#####IAV
+go_termsI <- ego.I.df$ID
+
+## Store goterms as GSEA object
+myCollection <- GOCollection(go_termsI)
+
+## Map GO terms to GOslims and select Biological Processes group
+slims.IAV <- goSlim(myCollection, slim, "BP", verbose = TRUE)
+
+slims.IAV <- slims.IAV[slims.IAV$Count != 0, ]
+
+slimdf_iav <- mappedIds(slims.IAV,slim, GOBPOFFSPRING)
+
+write.csv(slimdf_iav, file = "go_offspring_iav.csv", quote = FALSE)
+
+```
+
+
+
+####adding Genes to the goslims in IAV
+```{r}
+#####get the collective go terms after enrichgo
+enrich_go_terms.I <- ego.I.df$ID
+
+
+#####
+# Step 1: Split the go_terms column into separate GO IDs
+library(tidyr)
+
+####Get the children associated terms of the goslims
+slimdf_iav <- mappedIds(slims.IAV, collection = NULL, GOBPOFFSPRING)
+
+###
+slimdf_iav_long <- slimdf_iav |>
+  separate_rows(go_terms, sep = ";")  # makes one row per GO ID
+
+# Step 2: Keep only rows where the go_term is in enrichGO results
+slimdf_iav_matched <- slimdf_iav_long |>
+  filter(go_terms %in% enrich_go_terms.I)
+
+#####
+# Step 3: Check how many matches
+nrow(slimdf_iav_matched)  # number of GO term matches
+length(unique(slimdf_iav_matched$go_terms))
+
+#####
+enrichGO_genes.i <- ego.I.df %>%
+  separate_rows(geneID, sep = "/")  # split genes into rows
+
+# Join enrichGO genes with slim terms
+genes_linked_to_slims.i <- enrichGO_genes.i%>%
+  inner_join(slimdf_iav_long, by = c("ID" = "go_terms"))  # or the right column if GO term is named differently
+
+
+
+####sumarise these
+genes_per_slim.i <- genes_linked_to_slims.i %>%
+  group_by(Term) %>%
+  summarise(genes = paste(unique(geneID), collapse = ";"))
+
+
+#####combine the names and the GO terms
+View(slimdf_iav)
+slims.IAV$Go <- rownames(slims.IAV)
+slims.IAV1 <- slims.IAV
+row.names(slims.IAV1) <- slims.IAV1$Term 
+
+slims.IAV1 <- slims.IAV1[genes_per_slim.i$Term,]
+
+
+
+#### 
+
+genes_per_slim.i$GO <- slims.IAV1$Go
+
+rownames(genes_per_slim.i) <- genes_per_slim.i$GO
+genes_per_slim.i <- as.data.frame(genes_per_slim.i)
+rownames(genes_per_slim.i) <- genes_per_slim.i$GO
+
+View(genes_per_slim.i)
+write.csv(genes_per_slim.i, file = "./GO_slims/go_slim.non.immune_iav.csv", quote = FALSE)
+
+```
+
+
+
+```{r}
+###### UPSET PLOT to find which GOslims are intertwinned
+
+pathways_non.immune.slim <- list(IAV = row.names(genes_per_slim.i),
+RSV = row.names(genes_per_slim.r),
+SARS_COV2 = row.names(genes_per_slim.s))
+
+#Graph parameters 
+text_scale_options3 <- c(1.2, 1, 1.2, 1, 1, 1) 
+#setting colors #this can also be done with hexadecimal
+main_bar_col <- c("violetred4") 
+sets_bar_col <- c("turquoise4")
+matrix_col <- c("slateblue4") 
+shade_col <- c("wheat4") 
+mb_ratio1 <- c(0.45,0.55) 
+# setting variable names 
+set_vars <- sort(names(pathways_non.immune.slim)) 
+upset(fromList(pathways_non.immune.slim), 	
+      sets = set_vars, 	
+      mb.ratio = mb_ratio1, 	
+      nsets = 30, 	
+      nintersects = 30, 	
+      mainbar.y.label = "pathway intersect counts ", 	
+      sets.x.label = "pathways per virus", 	
+      order.by = "freq", 	
+      show.numbers = "yes", 	
+      point.size = 2, 	
+      line.size = 0.5, 	
+      set_size.angles = 45, 	
+      #boxplot.summary = NULL, 	
+      keep.order = T, 	
+      text.scale = text_scale_options3, 	
+      #number.angles = 45, 	
+      main.bar.color = main_bar_col, 	
+      sets.bar.color = sets_bar_col, 	
+      matrix.color = matrix_col, 	
+      shade.color = shade_col)
+  
+```
+
+
+#####KEGG pathways
+##SARSCOV2
+```{r}
+####Kegg  
+#gene_list is the genes of interest
+## at the moment  its  the nin immune genes
+
+#Sars_non.immune
+
+kk.s <- enrichKEGG(
+  gene         = SARS_ENTREZ_non.immune,
+  organism     = 'hsa',
+  pvalueCutoff = 1
+)
+
+kk_readable <- setReadable(kk.s, OrgDb = org.Hs.eg.db, keyType = "ENTREZID")
+
+####convert into a dataframe
+kk_readable <- as.data.frame(kk_readable)
+
+####write the csvs
+
+write.csv(kk_readable, "./Kegg_data/sars_non.immune_kegg.csv")
+```
+
+
+####RSV
+```{r}
+#Sars_non.immune
+
+kk.r <- enrichKEGG(
+  gene         = RSV_ENTREZ_non.immune,
+  organism     = 'hsa',
+  pvalueCutoff = 1
+)
+
+kk_readable.r <- setReadable(kk.r, OrgDb = org.Hs.eg.db, keyType = "ENTREZID")
+
+####convert into a dataframe
+kk_readable.r <- as.data.frame(kk_readable.r)
+
+####write the csvs
+
+write.csv(kk_readable.r, "./Kegg_data/RSV_non.immune_keg.csv")
+
+```
+
+
+####IAV
+```{r}
+#Sars_non.immune
+
+kk.i <- enrichKEGG(
+  gene         = IAV_ENTREZ_non.immune,
+  organism     = 'hsa',
+  pvalueCutoff = 1
+)
+
+kk_readable.i <- setReadable(kk.i, OrgDb = org.Hs.eg.db, keyType = "ENTREZID")
+
+####convert into a dataframe
+kk_readable.i <- as.data.frame(kk_readable.i)
+
+####write the csvs
+
+write.csv(kk_readable.i, "./Kegg_data/IAV_non.immune_keg.csv")
+
+```
+
+
+###OVERLAPS
+```{r}
+pathways_non.immune.KEGG <- list(IAV = row.names(kk_readable.i),
+RSV = row.names(kk_readable.r),
+SARS_COV2 = row.names(kk_readable))
+
+#Graph parameters 
+text_scale_options3 <- c(1.2, 1, 1.2, 1, 1, 1) 
+#setting colors #this can also be done with hexadecimal
+main_bar_col <- c("violetred4") 
+sets_bar_col <- c("turquoise4")
+matrix_col <- c("slateblue4") 
+shade_col <- c("wheat4") 
+mb_ratio1 <- c(0.45,0.55) 
+# setting variable names 
+set_vars <- sort(names(pathways_non.immune.KEGG)) 
+upset(fromList(pathways_non.immune.KEGG), 	
+      sets = set_vars, 	
+      mb.ratio = mb_ratio1, 	
+      nsets = 30, 	
+      nintersects = 30, 	
+      mainbar.y.label = "pathway intersect counts ", 	
+      sets.x.label = "pathways per virus", 	
+      order.by = "freq", 	
+      show.numbers = "yes", 	
+      point.size = 2, 	
+      line.size = 0.5, 	
+      set_size.angles = 45, 	
+      #boxplot.summary = NULL, 	
+      keep.order = T, 	
+      text.scale = text_scale_options3, 	
+      #number.angles = 45, 	
+      main.bar.color = main_bar_col, 	
+      sets.bar.color = sets_bar_col, 	
+      matrix.color = matrix_col, 	
+      shade.color = shade_col)
+```
+
+••••••••#########••••••••• IMMUNE PATHWAYS
+####Step1 convert the immune genes in Entrez IDS 
+### for Reactome and KEGG pathways
+```{r}
+###Step1 SARS-COV2
+# Query BioMart for Entrez IDs
+results_SARS.immune <- getBM(
+  attributes = c("hgnc_symbol", "entrezgene_id"),
+  filters = "hgnc_symbol",
+  values = sars_immune,
+  mart = ensembl
+)
+
+# View the result
+head(results_SARS.immune)
+results_SARS.immune <- na.omit(results_SARS.immune)
+
+SARS_ENTREZ.immune<- results_SARS.immune$entrezgene_id
+
+
+####STEP2 RSV
+# Query BioMart for Entrez IDs
+results_RSV.immune <- getBM(
+  attributes = c("hgnc_symbol", "entrezgene_id"),
+  filters = "hgnc_symbol",
+  values = RSV_immune,
+  mart = ensembl
+)
+
+
+# View the result
+head(results_RSV.immune)
+results_RSV.immune <- na.omit(results_RSV.immune)
+RSV_ENTREZ.immune<- results_RSV.immune$entrezgene_id
+
+
+####STEP3 IAV
+# Query BioMart for Entrez IDs
+results_IAV.immune <- getBM(
+  attributes = c("hgnc_symbol", "entrezgene_id"),
+  filters = "hgnc_symbol",
+  values = IAV_immune,
+  mart = ensembl
+)
+
+
+# View the result
+head(results_IAV.immune)
+results_IAV.immune <- na.omit(results_IAV.immune)
+IAV_ENTREZ.immune<- results_IAV.immune$entrezgene_id
+```
+
+
+
+
+
+##### DO THE PATHWAY ANALYSIS
+#step 1 GO 
+```{r}
+universe_genes <- immune_genes_uniq
+ego.s.immune <- enrichGO(gene          = sars_immune,
+                universe      = universe_genes,
+                OrgDb         = org.Hs.eg.db,
+                keyType       = "SYMBOL",
+                ont           = "BP",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 1,
+                qvalueCutoff  = 1,
+                minGSSize     =5,  
+        readable      = TRUE)
+head(ego.s.immune)
+
+ego.s.immune.df <- data.frame(ego.s.immune)
+
+write.csv(ego.s.df, "./GO_slims_pathways/sars_go.immune.csv")
+
+
+#####Find the GO slims
+
+goterms.si <- ego.s.immune.df$ID
+## Store goterms as GSEA object
+myCollection.si <- GOCollection(goterms.si)
+
+###download the following: https://current.geneontology.org/ontology/subsets/goslim_generic.obo
+####save it as go_basic.obo
+
+slim <- getOBOCollection("/Users/brendakarumbo/Desktop/PhD/Second_Rotation/Data/GO_slim/go_basic.obo")
+
+## Map GO terms to GOslims and select Biological Processes group
+slims.sars.immune <- goSlim(myCollection.si, slim, "BP", verbose = TRUE)
+  
+slims.sars.immune <- slims.sars.immune[slims.sars.immune$Count != 0, ]
+
+slims.sars.immune <- as.data.frame(slims.sars.immune)
+
+###SARS (24 go slims)
+# This should match the ontology used above.
+# E.g. GOBPOFFSPRING or GOCCOFFSPRING
+GO.db::GOBPOFFSPRING
+
+
+####getting all the children associated with the goslims
+mappedIds <-
+  function(df, collection, OFFSPRING)
+  {
+    map <- as.list(OFFSPRING[rownames(df)])
+    mapped <- map
+    df[["go_terms"]] <- vapply(unname(mapped), paste, collapse = ";", character(1L))
+    df
+  }
+
+####this is the point we do this .... teren teren teren
+slims.sars.immune <- mappedIds(slims.sars.immune, collection = NULL, GOBPOFFSPRING)
+
+#write.csv(slimdf_sars, file = "go_offspring_sars.csv", quote = FALSE)
+```
+
+##### influenza
+```{r}
+
+universe_genes <- immune_genes_uniq
+ego.i.immune <- enrichGO(gene          = IAV_immune,
+                universe      = universe_genes,
+                OrgDb         = org.Hs.eg.db,
+                keyType       = "SYMBOL",
+                ont           = "BP",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 1,
+                qvalueCutoff  = 1,
+                minGSSize     =5,  
+        readable      = TRUE)
+head(ego.i.immune)
+
+summary(ego.i.immune)
+ gg1<- barplot(ego.i.immune, showCategory=10, title = "immune pathways IAV") 
+ 
+ ggsave("./figures/immune_iav.png", gg1,width = 10, height = 6)
+```
+
+
+```{r}
+ego.i.immune.df <- data.frame(ego.i.immune)
+
+
+#####get the collective go terms after enrichgo
+enrich_go_terms.i.immune <- ego.i.immune.df$ID
+
+
+#####Find the GO slims
+
+goterms.ii <- ego.i.immune.df$ID
+## Store goterms as GSEA object
+myCollection.ii <- GOCollection(goterms.ii)
+
+###download the following: https://current.geneontology.org/ontology/subsets/goslim_generic.obo
+####save it as go_basic.obo
+
+slim <- getOBOCollection("/Users/brendakarumbo/Desktop/PhD/Second_Rotation/Data/GO_slim/go_basic.obo")
+
+## Map GO terms to GOslims and select Biological Processes group
+slims.IAV.immune <- goSlim(myCollection.ii, slim, "BP", verbose = TRUE)
+  
+slims.IAV.immune <- slims.IAV.immune[slims.IAV.immune$Count != 0, ]
+
+slims.IAV.immune <- as.data.frame(slims.IAV.immune)
+
+###SARS (24 go slims)
+# This should match the ontology used above.
+# E.g. GOBPOFFSPRING or GOCCOFFSPRING
+GO.db::GOBPOFFSPRING
+
+
+####ADD THE GO TERMS
+slims.IAV.immune <- mappedIds(slims.IAV.immune, collection = NULL, GOBPOFFSPRING)
+
+
+#####
+# Step 1: Split the go_terms column into separate GO IDs
+library(tidyr)
+
+slimdf_IAV_long.immune <- slims.IAV.immune |>
+  separate_rows(go_terms, sep = ";")  # makes one row per GO ID
+
+# Step 2: Keep only rows where the go_term is in enrichGO results
+slimdf_IAV_matched.immune <- slimdf_IAV_long.immune |>
+  filter(go_terms %in% enrich_go_terms.i.immune)
+
+#####
+# Step 3: Check how many matches
+nrow(slimdf_IAV_matched.immune)  # number of GO term matches
+length(unique(slimdf_IAV_matched.immune$go_terms))
+
+#####
+enrichGO_genes.i.immune <- ego.i.immune.df %>%
+  separate_rows(geneID, sep = "/")  # split genes into rows
+
+# Join enrichGO genes with slim terms
+genes_linked_to_slims.i.immune <- enrichGO_genes.i.immune %>%
+  inner_join(slimdf_IAV_long.immune, by = c("ID" = "go_terms"))  # or the right column if GO term is named differently
+
+
+
+####sumarise these
+genes_per_slim.i.immune <- genes_linked_to_slims.i.immune %>%
+  group_by(Term) %>%
+  summarise(genes = paste(unique(geneID), collapse = ";"))
+
+
+#####combine the nameds and the GO terms
+View(slims.IAV.immune)
+slims.IAV.immune$Go <- rownames(slims.IAV.immune)
+slims.IAV.immune1 <- slims.IAV.immune
+row.names(slims.IAV.immune1) <- slims.IAV.immune1$Term 
+
+slims.IAV.immune1 <- slims.IAV.immune1[genes_per_slim.i.immune$Term,]
+
+
+
+#### 
+
+genes_per_slim.i.immune$GO <- slims.IAV.immune1$Go
+
+rownames(genes_per_slim.i.immune) <- genes_per_slim.i.immune$GO
+genes_per_slim.i.immune <- as.data.frame(genes_per_slim.i.immune)
+rownames(genes_per_slim.i.immune) <- genes_per_slim.i.immune$GO
+
+View(genes_per_slim.i.immune)
+write.csv(genes_per_slim.i.immune, file = "./GO_slims_pathways/go_slim.immune_IAV.csv", quote = FALSE)
+
+```
+
+
+####RSV
+```{r}
+universe_genes <- immune_genes_uniq
+ego.r.immune <- enrichGO(gene          = RSV_immune,
+                universe      = universe_genes,
+                OrgDb         = org.Hs.eg.db,
+                keyType       = "SYMBOL",
+                ont           = "BP",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 1,
+                qvalueCutoff  = 1,
+                minGSSize     =5,  
+        readable      = TRUE)
+head(ego.r.immune)
+
+ego.r.immune.df <- data.frame(ego.r.immune)
+
+
+#####get the collective go terms after enrichgo
+enrich_go_terms.r.immune <- ego.r.immune.df$ID
+
+
+#####Find the GO slims
+
+goterms.ri <- ego.r.immune.df$ID
+## Store goterms as GSEA object
+myCollection.ri <- GOCollection(goterms.ri)
+
+###download the following: https://current.geneontology.org/ontology/subsets/goslim_generic.obo
+####save it as go_basic.obo
+
+slim <- getOBOCollection("/Users/brendakarumbo/Desktop/PhD/Second_Rotation/Data/GO_slim/go_basic.obo")
+
+## Map GO terms to GOslims and select Biological Processes group
+slims.RSV.immune <- goSlim(myCollection.ri, slim, "BP", verbose = TRUE)
+  
+slims.RSV.immune <- slims.RSV.immune[slims.RSV.immune$Count != 0, ]
+
+slims.RSV.immune <- as.data.frame(slims.RSV.immune)
+
+###SARS (24 go slims)
+# This should match the ontology used above.
+# E.g. GOBPOFFSPRING or GOCCOFFSPRING
+GO.db::GOBPOFFSPRING
+
+
+####ADD THE GO TERMS
+slims.RSV.immune <- mappedIds(slims.RSV.immune, collection = NULL, GOBPOFFSPRING)
+
+
+#####
+# Step 1: Split the go_terms column into separate GO IDs
+library(tidyr)
+
+slimdf_RSV_long.immune <- slims.RSV.immune |>
+  separate_rows(go_terms, sep = ";")  # makes one row per GO ID
+
+# Step 2: Keep only rows where the go_term is in enrichGO results
+slimdf_RSV_matched.immune <- slimdf_RSV_long.immune |>
+  filter(go_terms %in% enrich_go_terms.r.immune)
+
+#####
+# Step 3: Check how many matches
+nrow(slimdf_RSV_matched.immune)  # number of GO term matches
+length(unique(slimdf_RSV_matched.immune$go_terms))
+
+#####
+enrichGO_genes.r.immune <- ego.r.immune.df %>%
+  separate_rows(geneID, sep = "/")  # split genes into rows
+
+# Join enrichGO genes with slim terms
+genes_linked_to_slims.r.immune <- enrichGO_genes.r.immune %>%
+  inner_join(slimdf_RSV_long.immune, by = c("ID" = "go_terms"))  # or the right column if GO term is named differently
+
+
+
+####sumarise these
+genes_per_slim.r.immune <- genes_linked_to_slims.r.immune %>%
+  group_by(Term) %>%
+  summarise(genes = paste(unique(geneID), collapse = ";"))
+
+
+#####combine the nameds and the GO terms
+View(slims.RSV.immune)
+slims.RSV.immune$Go <- rownames(slims.RSV.immune)
+slims.RSV.immune1 <- slims.RSV.immune
+row.names(slims.RSV.immune1) <- slims.RSV.immune1$Term 
+
+slims.RSV.immune1 <- slims.RSV.immune1[genes_per_slim.r.immune$Term,]
+
+
+
+#### 
+
+genes_per_slim.r.immune$GO <- slims.RSV.immune1$Go
+
+rownames(genes_per_slim.r.immune) <- genes_per_slim.r.immune$GO
+genes_per_slim.r.immune <- as.data.frame(genes_per_slim.r.immune)
+rownames(genes_per_slim.r.immune) <- genes_per_slim.r.immune$GO
+
+View(genes_per_slim.r.immune)
+write.csv(genes_per_slim.i.immune, file = "./GO_slims_pathways/go_slim.immune_RSV.csv", quote = FALSE)
+
+```
+
+
+###UPSET PLOT
+```{r}
+
+```
+
+```{r}
+#####get the collective go terms after enrichgo
+enrich_go_terms.i.immune <- ego.
+
+
+#####
+# Step 1: Split the go_terms column into separate GO IDs
+library(tidyr)
+
+slimdf_sars_long.immune <- slims.sars.immune |>
+  separate_rows(go_terms, sep = ";")  # makes one row per GO ID
+
+# Step 2: Keep only rows where the go_term is in enrichGO results
+slimdf_sars_matched.immune <- slimdf_sars_long.immune |>
+  filter(go_terms %in% enrich_go_terms.s.immune)
+
+#####
+# Step 3: Check how many matches
+nrow(slimdf_sars_matched.immune)  # number of GO term matches
+length(unique(slimdf_sars_matched.immune$go_terms))
+
+#####
+enrichGO_genes.s.immune <- ego.s.immune.df %>%
+  separate_rows(geneID, sep = "/")  # split genes into rows
+
+# Join enrichGO genes with slim terms
+genes_linked_to_slims.s.immune <- enrichGO_genes.s.immune %>%
+  inner_join(slimdf_sars_long.immune, by = c("ID" = "go_terms"))  # or the right column if GO term is named differently
+
+
+
+####sumarise these
+genes_per_slim.s.immune <- genes_linked_to_slims.s.immune %>%
+  group_by(Term) %>%
+  summarise(genes = paste(unique(geneID), collapse = ";"))
+
+
+#####combine the nameds and the GO terms
+View(slims.sars.immune)
+slims.sars.immune$Go <- rownames(slims.sars.immune)
+slims.sars.immune1 <- slims.sars.immune
+row.names(slims.sars.immune1) <- slims.sars.immune1$Term 
+
+slims.sars.immune1 <- slims.sars.immune1[genes_per_slim.s.immune$Term,]
+
+
+
+#### 
+
+genes_per_slim.s.immune$GO <- slims.sars.immune1$Go
+
+rownames(genes_per_slim.s.immune) <- genes_per_slim.s.immune$GO
+genes_per_slim.s.immune <- as.data.frame(genes_per_slim.s.immune)
+rownames(genes_per_slim.s.immune) <- genes_per_slim.s.immune$GO
+
+View(genes_per_slim.s.immune)
+write.csv(genes_per_slim.s.immune, file = "./GO_slims_pathways/go_slim.immune_sars.csv", quote = FALSE)
+
+```
+
+
+#### UPSET PLOT FOR IMMUNE GO SLIMS
+```{r}
+###### UPSET PLOT to find which GOslims are intertwinned
+
+pathways.immune.slim <- list(IAV = row.names(genes_per_slim.i.immune),
+RSV = row.names(genes_per_slim.r.immune),
+SARS_COV2 = row.names(genes_per_slim.s.immune))
+
+#Graph parameters 
+text_scale_options3 <- c(1.2, 1, 1.2, 1, 1, 1) 
+#setting colors #this can also be done with hexadecimal
+main_bar_col <- c("violetred4") 
+sets_bar_col <- c("turquoise4")
+matrix_col <- c("slateblue4") 
+shade_col <- c("wheat4") 
+mb_ratio1 <- c(0.45,0.55) 
+# setting variable names 
+set_vars <- sort(names(pathways.immune.slim)) 
+upset(fromList(pathways.immune.slim), 	
+      sets = set_vars, 	
+      mb.ratio = mb_ratio1, 	
+      nsets = 30, 	
+      nintersects = 30, 	
+      mainbar.y.label = "pathway intersect counts ", 	
+      sets.x.label = "pathways per virus", 	
+      order.by = "freq", 	
+      show.numbers = "yes", 	
+      point.size = 2, 	
+      line.size = 0.5, 	
+      set_size.angles = 45, 	
+      #boxplot.summary = NULL, 	
+      keep.order = T, 	
+      text.scale = text_scale_options3, 	
+      #number.angles = 45, 	
+      main.bar.color = main_bar_col, 	
+      sets.bar.color = sets_bar_col, 	
+      matrix.color = matrix_col, 	
+      shade.color = shade_col)
+  
+```
+####REACTOME
+```{r}
+# Use UpSet2::fromList to convert your sets
+gene_sets <- list(
+  SARS.COV2 = sars_immune,
+  IAV = IAV_immune,
+  RSV = RSV_immune
+)
+
+#Graph parameters 
+text_scale_options3 <- c(1.2, 1, 1.2, 1, 1, 1) 
+#setting colors #this can also be done with hexadecimal
+main_bar_col <- c("violetred4") 
+sets_bar_col <- c("turquoise4")
+matrix_col <- c("slateblue4") 
+shade_col <- c("wheat4") 
+mb_ratio1 <- c(0.45,0.55) 
+# setting variable names 
+set_vars <- sort(names(gene_sets)) 
+upset(fromList(gene_sets), 	
+      sets = set_vars, 	
+      mb.ratio = mb_ratio1, 	
+      nsets = 30, 	
+      nintersects = 30, 	
+      mainbar.y.label = "Gene intersect counts ", 	
+      sets.x.label = "DEGs per virus", 	
+      order.by = "freq", 	
+      show.numbers = "yes", 	
+      point.size = 2, 	
+      line.size = 0.5, 	
+      set_size.angles = 45, 	
+      #boxplot.summary = NULL, 	
+      keep.order = T, 	
+      text.scale = text_scale_options3, 	
+      #number.angles = 45, 	
+      main.bar.color = main_bar_col, 	
+      sets.bar.color = sets_bar_col, 	
+      matrix.color = matrix_col, 	
+      shade.color = shade_col)
+
+```
+
+heatmaps for the overlaps
+```{r}
+common_immune <- Reduce(intersect, list(sars_immune, IAV_immune, RSV_immune))
+common_non_immune <-Reduce(intersect, list(Sars_non.immune, IAV_non.immune,RSV_non.immune))
+
+
+###### get the normalized counts
+counts_use <- counts[, metadata_use$orig]
+
+dds <- DESeqDataSetFromMatrix(countData = counts_use,
+                              colData = metadata_use,
+                              design = ~ condition)
+dds <- estimateSizeFactors(dds)
+normalized_counts <- counts(dds, normalized=TRUE)
+
+
+# Filter out rows where 'condition' contains the word "mock"
+df_filtered <- metadata_use[!grepl("mock", metadata_use$condition, ignore.case = TRUE), ]
+# Sort dataframe alphabetically by 'condition' column
+df_filtered <- metadata_use[order(metadata_use$condition), ]
+
+# Define the desired order
+df_filtered$condition <- factor(df_filtered$condition, levels = c("IAV", "RSV", "SARS.CoV.2", "Mock"))
+
+
+
+#####extract the normalised counts
+counts_norm_immune <- normalized_counts[common_immune,df_filtered$orig]
+counts_norm_non.immune <- normalized_counts[common_non_immune,df_filtered$orig]
+
+
+# Vector of group names (MUST come before you use it in the annotation!)
+virus <- c("IAV", "IAV", 
+           "RSV", "RSV", "RSV", "RSV", "RSV", 
+           "SARS-COV2", "SARS-COV2", "SARS-COV2", "SARS-COV2", "SARS-COV2", "SARS-COV2", 
+           rep("Mock", times = 13))
+
+# Bottom annotation using HeatmapAnnotation
+bottom_ann <- HeatmapAnnotation(
+  virus = virus,
+  col = list(
+    virus = c("SARS-COV2" = "#CC6677",
+              "IAV" = "#88CCEE",
+              "RSV" = "goldenrod",
+              "Mock" = "khaki")
+  ),
+  annotation_legend_param = list(
+    virus = list(title = "Virus", direction = "horizontal")
+  )
+)
+
+# Transform data
+log_counts <- log2(counts_norm_immune + 1)
+
+# Set a more realistic color scale for log2 counts
+col_fun <- colorRamp2(c(0, 5, 10), c("dodgerblue", "white", "tomato"))
+
+####use the complex heatmap package :https://github.com/jokergoo/ComplexHeatmap
+# Heatmap
+ht <- Heatmap(
+  log_counts,
+  name = "Log2 expression",
+  col = col_fun,
+  cluster_columns = FALSE,
+  cluster_rows = FALSE,
+  show_row_names = TRUE,
+  show_column_names = FALSE,
+  bottom_annotation = bottom_ann,
+  column_split = factor(virus, levels = c("IAV", "RSV", "SARS-COV2", "Mock")),
+  column_title = NULL,
+  row_names_gp = gpar(fontsize = 7, fontface = "bold"),
+  heatmap_legend_param = list(
+    title = "Log2 Expression",
+    direction = "vertical"
+  )
+)
+
+# Draw heatmap
+draw(ht, heatmap_legend_side = "right", annotation_legend_side = "right")
+
+```
+
+
+```{r}
+summary(ego.s.immune)
+ gg2<- barplot(ego.s.immune, showCategory=c("type I interferon production", "	
+regulation of TOR signaling","protein catabolic process","response to oxidative stress","regulation of apoptotic signaling pathway","positive regulation of protein transport","regulation of proteolysis","intracellular transport","establishment of protein localization","cellular response to stress","	
+cell junction organization"), title = "immune pathways SARS-COV2") 
+ 
+ ggsave("./figures/immune_SARS.png", gg2,width = 10, height = 6)
+```
+
+
+
+```{r}
+summary(ego.r.immune)
+gg3 <- barplot(ego.r.immune, showCategory = 10, title = "immune pathways RSV")
+
+ggsave("./figures/immune_RSV.png", gg3,width = 10, height = 6)
+
+
+
+
+
+
+```
+```{r}
+summary(ego.R)
+gg4 <- barplot(ego.R, showCategory = 10, title = "non-immune pathways RSV")
+ggsave("./figures/non-immune_RSV.png", gg4,width = 10, height = 6)
+```
+
+```{r}
+summary(ego.s)
+gg5 <- barplot(ego.s, showCategory = 10, title = "non-immune pathways SARS-COV2")
+ggsave("./figures/non-immune_SARS-COV2.png", gg5,width = 10, height = 6)
+```
+
+```{r}
+summary(ego.I)
+gg6 <- barplot(ego.I, showCategory = 10, title = "non-immune pathways IAV")
+ggsave("./figures/non-immune_IAV.png", gg6,width = 10, height = 6)
+```
+
+```{r}
+### Extract the pathways that are common in the 3 viruses
+GO.s <- row.names(genes_per_slim.s)
+GO.i <- row.names(genes_per_slim.i)
+GO.r <- row.names(genes_per_slim.r)
+
+
+common_GO_non.immune <-Reduce(intersect, list(GO.s, GO.i,GO.r))
+
+length(common_GO_non.immune)
+
+#####extract the common GO terms
+common.s.GO <- genes_per_slim.s[common_GO_non.immune,]
+common.i.GO <- genes_per_slim.i[common_GO_non.immune,]
+common.r.GO <- genes_per_slim.r[common_GO_non.immune,]
+
+
+
+write.csv(common.s.GO, "./GO_slims_pathways/common.s.GO.csv", quote = F)
+write.csv(common.i.GO, "./GO_slims_pathways/common.i.GO.csv", quote = F)
+write.csv(common.r.GO, "./GO_slims_pathways/common.r.GO.csv", quote = F)
+
+```
+
+
+```{r}
+#####Getting virus related GO slims
+vir.SARS <- read.csv("GO_slims_pathways/SARS-COV2_Virus-Related_GO_Terms.csv", row.names = 2)
+vir.RSV <- read.csv("GO_slims_pathways/RSV_Virus-Related_GO_Terms.csv",row.names = 2)
+vir.IAV <- read.csv("GO_slims_pathways/Virus-Related_GO_Terms_IAV.csv",row.names = 2)
+
+##### Get the go slims that matter
+# A vector of virus-related GO terms (IDs or keywords)
+virus_terms.s <- rownames(vir.SARS)
+virus_terms.r <- rownames(vir.RSV)
+virus_terms.i <- rownames(vir.IAV)
+
+
+# Keep GO slims that map to virus-related terms
+filtered_df.s <- slimdf_sars[grepl(paste(virus_terms.s, collapse = "|"), 
+                               slimdf_sars$go_terms, ignore.case = TRUE), ]
+
+
+####rsv
+filtered_df.r <- slimdf_rsv[grepl(paste(virus_terms.r, collapse = "|"), 
+                               slimdf_rsv$go_terms, ignore.case = TRUE), ]
+
+
+#####iav
+filtered_df.i <- slimdf_iav[grepl(paste(virus_terms.i, collapse = "|"), 
+                               slimdf_iav$go_terms, ignore.case = TRUE), ]
+
+GO.s_v <- rownames(filtered_df.s)
+GO.i_v <- rownames(filtered_df.i)
+GO.r_v <- rownames(filtered_df.r)
+
+
+#####find the overlap in the 3
+
+common_GO_virus <-Reduce(intersect, list(GO.s_v, GO.i_v,GO.r_v))
+
+
+
+
+```
+
+```{r}
+#####extract the common GO terms
+common.s.GO <- genes_per_slim.s[c(common_GO_virus, "GO:0012501"),]
+common.i.GO <- genes_per_slim.i[c(common_GO_virus, "GO:0012501"),]
+common.r.GO <- genes_per_slim.r[c(common_GO_virus, "GO:0012501"),]
+
+
+
+write.csv(common.s.GO, "./GO_slims_pathways/common.s.GO.csv", quote = F)
+write.csv(common.i.GO, "./GO_slims_pathways/common.i.GO.csv", quote = F)
+write.csv(common.r.GO, "./GO_slims_pathways/common.r.GO.csv", quote = F)
+
+```
+
+
+
+
+```{r}
+sessionInfo()
+```
+
+
